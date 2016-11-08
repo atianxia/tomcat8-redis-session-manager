@@ -8,7 +8,6 @@ import org.apache.catalina.Loader;
 import org.apache.catalina.Session;
 import org.apache.catalina.Valve;
 import org.apache.catalina.session.ManagerBase;
-import org.apache.catalina.util.LifecycleSupport;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import redis.clients.jedis.Jedis;
@@ -24,7 +23,9 @@ import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 
 public class RedisSessionManager extends ManagerBase implements Lifecycle {
@@ -68,14 +69,14 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
   protected static String name = "RedisSessionManager";
 
-  protected String serializationStrategyClass = "com.orangefunction.tomcat.redissessions.JavaSerializer";
+  protected String serializationStrategyClass = JavaSerializer.class.getName();
 
   protected EnumSet<SessionPersistPolicy> sessionPersistPoliciesSet = EnumSet.of(SessionPersistPolicy.DEFAULT);
 
   /**
-   * The lifecycle event support for this component.
+   * The list of registered LifecycleListeners for event notifications.
    */
-  protected LifecycleSupport lifecycle = new LifecycleSupport(this);
+  private final List<LifecycleListener> lifecycleListeners = new CopyOnWriteArrayList<>();
 
   public String getHost() {
     return host;
@@ -226,33 +227,29 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
   }
 
   /**
-   * Add a lifecycle event listener to this component.
-   *
-   * @param listener The listener to add
+   * {@inheritDoc}
    */
   @Override
   public void addLifecycleListener(LifecycleListener listener) {
-    lifecycle.addLifecycleListener(listener);
+    lifecycleListeners.add(listener);
   }
 
+
   /**
-   * Get the lifecycle listeners associated with this lifecycle. If this
-   * Lifecycle has no listeners registered, a zero-length array is returned.
+   * {@inheritDoc}
    */
   @Override
   public LifecycleListener[] findLifecycleListeners() {
-    return lifecycle.findLifecycleListeners();
+    return lifecycleListeners.toArray(new LifecycleListener[0]);
   }
 
 
   /**
-   * Remove a lifecycle event listener from this component.
-   *
-   * @param listener The listener to remove
+   * {@inheritDoc}
    */
   @Override
   public void removeLifecycleListener(LifecycleListener listener) {
-    lifecycle.removeLifecycleListener(listener);
+    lifecycleListeners.remove(listener);
   }
 
   /**
@@ -269,7 +266,7 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
     setState(LifecycleState.STARTING);
 
     Boolean attachedToValve = false;
-    for (Valve valve : getContainer().getPipeline().getValves()) {
+    for (Valve valve : getContext().getPipeline().getValves()) {
       if (valve instanceof RedisSessionHandlerValve) {
         this.handlerValve = (RedisSessionHandlerValve) valve;
         this.handlerValve.setRedisSessionManager(this);
@@ -296,7 +293,10 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
     initializeDatabaseConnection();
 
-    setDistributable(true);
+  }
+
+  private int getMaxInactiveInterval() {
+    return getContext().getSessionTimeout() * 60;
   }
 
 
@@ -708,8 +708,8 @@ public class RedisSessionManager extends ManagerBase implements Lifecycle {
 
     Loader loader = null;
 
-    if (getContainer() != null) {
-      loader = getContainer().getLoader();
+    if (getContext() != null) {
+      loader = getContext().getLoader();
     }
 
     ClassLoader classLoader = null;
